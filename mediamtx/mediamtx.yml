@@ -1,0 +1,44 @@
+# MediaMTX 1.21.x. Unspecified keys keep the image defaults.
+# The control API must allow the Docker bridge address, not only 127.0.0.1
+# inside the container, because the Next.js process calls it from the host.
+
+logLevel: info
+
+api: true
+apiAddress: :9997
+
+rtsp: true
+rtspAddress: :8554
+rtspTransports: [tcp]
+
+hls: true
+hlsAddress: :8888
+hlsAllowOrigins: ["*"]
+hlsVariant: mpegts
+
+webrtc: true
+webrtcAddress: :8889
+webrtcAllowOrigins: ["*"]
+webrtcLocalUDPAddress: :8189
+webrtcIPsFromInterfaces: false
+webrtcAdditionalHosts: [127.0.0.1]
+
+rtmp: false
+srt: false
+moq: false
+
+authMethod: internal
+authInternalUsers:
+  - user: any
+    pass:
+    ips: []
+    permissions:
+      - action: publish
+      - action: read
+      - action: playback
+      - action: api
+
+pathDefaults:
+  rtspTransport: tcp
+
+paths: {}

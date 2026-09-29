@@ -1,5 +1,6 @@
 "use client"
 
+import Link from "next/link"
 import { useState } from "react"
 import { PageHeader } from "@/components/layout/page-header"
 import { Button } from "@/components/ui/button"
@@ -323,6 +324,22 @@ export function CamerasManager({
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          nativeButton={false}
+                          render={<Link href={`/dashboard/cameras/${camera.id}`} />}
+                        >
+                          Details
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          nativeButton={false}
+                          render={<Link href={`/dashboard/live/${camera.id}`} />}
+                        >
+                          Live
+                        </Button>
                         <Button
                           size="sm"
                           variant="outline"

@@ -10,8 +10,29 @@ import {
 } from "@/server/cameras"
 import { connectToCamera } from "@/server/onvif"
 import { mapOnvifError } from "@/server/onvif/errors"
+import { StreamError, registerStream } from "@/server/streaming"
 
 export const runtime = "nodejs"
+
+function withRtspCredentials(rtspUrl: string, username: string, password: string) {
+  const url = new URL(rtspUrl)
+  if (!url.username) {
+    url.username = username
+    url.password = password
+  }
+  return url.toString()
+}
+
+function streamFailure(error: unknown) {
+  if (!(error instanceof StreamError)) {
+    return NextResponse.json(
+      { error: "The stream could not be started.", code: "STREAM_REJECTED" },
+      { status: 502 },
+    )
+  }
+  const status = error.code === "STREAM_NO_SOURCE" ? 422 : 502
+  return NextResponse.json({ error: error.message, code: error.code }, { status })
+}
 
 export async function POST(
   _request: Request,
@@ -38,6 +59,21 @@ export async function POST(
       camera.username,
       decrypt(camera.encryptedPassword),
     )
+    if (!connected.streamUri) {
+      throw new StreamError(
+        "STREAM_NO_SOURCE",
+        "The camera did not return an RTSP stream address.",
+      )
+    }
+
+    const playback = await registerStream(
+      camera.id,
+      withRtspCredentials(
+        connected.streamUri,
+        camera.username,
+        decrypt(camera.encryptedPassword),
+      ),
+    )
     const updated = await saveCameraState(camera.id, camera.status, {
       status: "ONLINE",
       lastSeenAt: new Date(),
@@ -47,12 +83,10 @@ export async function POST(
       ptzSupported: connected.ptz,
       streamUrl: connected.streamUri,
     })
-    return NextResponse.json({
-      camera: toCameraDto(updated),
-      firmware: connected.firmware,
-      ptz: connected.ptz,
-    })
+
+    return NextResponse.json({ camera: toCameraDto(updated), playback })
   } catch (error) {
+    if (error instanceof StreamError) return streamFailure(error)
     const mapped = mapOnvifError(error)
     await saveCameraState(camera.id, camera.status, {
       status: mapped.code === "ONVIF_UNREACHABLE" ? "OFFLINE" : "UNKNOWN",

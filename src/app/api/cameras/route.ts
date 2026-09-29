@@ -4,6 +4,7 @@ import { prisma } from "@/server/db"
 import {
   onvifFailure,
   requireApiUser,
+  saveCameraState,
   toCameraDto,
   unauthorized,
 } from "@/server/cameras"
@@ -17,6 +18,7 @@ const ipv4 =
 
 async function refreshStatus(camera: {
   id: string
+  status: "ONLINE" | "OFFLINE" | "UNKNOWN"
   ipAddress: string
   onvifPort: number
   username: string
@@ -29,23 +31,19 @@ async function refreshStatus(camera: {
       camera.username,
       decrypt(camera.encryptedPassword),
     )
-    return prisma.camera.update({
-      where: { id: camera.id },
-      data: {
-        status: "ONLINE",
-        lastSeenAt: new Date(),
-        brand: connected.manufacturer,
-        model: connected.model,
-        streamUrl: connected.streamUri,
-      },
+    return saveCameraState(camera.id, camera.status, {
+      status: "ONLINE",
+      lastSeenAt: new Date(),
+      brand: connected.manufacturer,
+      model: connected.model,
+      firmware: connected.firmware,
+      ptzSupported: connected.ptz,
+      streamUrl: connected.streamUri,
     })
   } catch (error) {
     const mapped = mapOnvifError(error)
-    return prisma.camera.update({
-      where: { id: camera.id },
-      data: {
-        status: mapped.code === "ONVIF_UNREACHABLE" ? "OFFLINE" : "UNKNOWN",
-      },
+    return saveCameraState(camera.id, camera.status, {
+      status: mapped.code === "ONVIF_UNREACHABLE" ? "OFFLINE" : "UNKNOWN",
     })
   }
 }
@@ -145,6 +143,8 @@ export async function POST(request: Request) {
         name,
         brand: connected.manufacturer,
         model: connected.model,
+        firmware: connected.firmware,
+        ptzSupported: connected.ptz,
         ipAddress,
         onvifPort,
         username,
@@ -152,6 +152,7 @@ export async function POST(request: Request) {
         streamUrl: connected.streamUri,
         status: "ONLINE",
         lastSeenAt: new Date(),
+        statusLogs: { create: { status: "ONLINE" } },
       },
     })
 

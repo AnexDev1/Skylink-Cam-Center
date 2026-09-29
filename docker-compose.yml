@@ -16,5 +16,17 @@ services:
       timeout: 5s
       retries: 10
 
+  mediamtx:
+    image: bluenviron/mediamtx:1.21.1
+    restart: unless-stopped
+    volumes:
+      - ./mediamtx/mediamtx.yml:/mediamtx.yml:ro
+    ports:
+      - "8554:8554"
+      - "8888:8888"
+      - "8889:8889"
+      - "8189:8189/udp"
+      - "127.0.0.1:9997:9997"
+
 volumes:
   skylink_pg_data:

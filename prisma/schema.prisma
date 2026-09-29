@@ -60,7 +60,20 @@ model Camera {
   username          String
   encryptedPassword String
   streamUrl         String?
+  firmware          String       @default("")
+  ptzSupported      Boolean      @default(false)
   status            CameraStatus @default(UNKNOWN)
   lastSeenAt        DateTime?
   createdAt         DateTime     @default(now())
+  statusLogs        CameraStatusLog[]
+}
+
+model CameraStatusLog {
+  id        String       @id @default(cuid())
+  cameraId  String
+  camera    Camera       @relation(fields: [cameraId], references: [id], onDelete: Cascade)
+  status    CameraStatus
+  createdAt DateTime     @default(now())
+
+  @@index([cameraId, createdAt])
 }
