@@ -3,6 +3,7 @@
 import { useState, useSyncExternalStore } from "react"
 import { Header } from "@/components/layout/header"
 import { Sidebar } from "@/components/layout/sidebar"
+import type { SessionUser } from "@/types/auth"
 import { cn } from "cn"
 
 const STORAGE_KEY = "sl-sidebar-collapsed"
@@ -17,7 +18,13 @@ function readCollapsed() {
   return window.localStorage.getItem(STORAGE_KEY) === "true"
 }
 
-export function AppShell({ children }: { children: React.ReactNode }) {
+export function AppShell({
+  children,
+  user,
+}: {
+  children: React.ReactNode
+  user: SessionUser
+}) {
   const collapsed = useSyncExternalStore(
     subscribeCollapsed,
     readCollapsed,
@@ -54,7 +61,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           collapsed && "lg:pl-[4.5rem]",
         )}
       >
-        <Header onOpenMobileNav={() => setMobileOpen(true)} />
+        <Header user={user} onOpenMobileNav={() => setMobileOpen(true)} />
         <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8">{children}</main>
       </div>
     </div>

@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: skylink
+      POSTGRES_PASSWORD: skylink
+      POSTGRES_DB: skylink_camcenter
+    ports:
+      - "5433:5432"
+    volumes:
+      - skylink_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U skylink -d skylink_camcenter"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  skylink_pg_data:

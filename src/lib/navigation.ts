@@ -15,15 +15,15 @@ export type NavItem = {
 }
 
 export const navItems: NavItem[] = [
-  { label: "Dashboard", href: "/", icon: LayoutDashboard },
-  { label: "Cameras", href: "/cameras", icon: Cctv },
-  { label: "Live View", href: "/live", icon: Video },
-  { label: "Alerts", href: "/alerts", icon: Bell },
-  { label: "Users", href: "/users", icon: Users },
-  { label: "Settings", href: "/settings", icon: Settings },
+  { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+  { label: "Cameras", href: "/dashboard/cameras", icon: Cctv },
+  { label: "Live View", href: "/dashboard/live", icon: Video },
+  { label: "Alerts", href: "/dashboard/alerts", icon: Bell },
+  { label: "Users", href: "/dashboard/users", icon: Users },
+  { label: "Settings", href: "/dashboard/settings", icon: Settings },
 ]
 
 export function isNavActive(pathname: string, href: string) {
-  if (href === "/") return pathname === "/"
+  if (href === "/dashboard") return pathname === "/dashboard"
   return pathname === href || pathname.startsWith(`${href}/`)
 }

@@ -1,0 +1,66 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  ADMIN
+  OPERATOR
+  VIEWER
+}
+
+enum CameraStatus {
+  ONLINE
+  OFFLINE
+  UNKNOWN
+}
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+  users     User[]
+  sites     Site[]
+}
+
+model User {
+  id             String       @id @default(cuid())
+  name           String
+  email          String       @unique
+  passwordHash   String
+  role           Role
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+}
+
+model Site {
+  id             String       @id @default(cuid())
+  name           String
+  organizationId String
+  address        String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+  cameras        Camera[]
+}
+
+model Camera {
+  id                String       @id @default(cuid())
+  siteId            String
+  site              Site         @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  name              String
+  brand             String
+  model             String
+  ipAddress         String
+  onvifPort         Int          @default(80)
+  username          String
+  encryptedPassword String
+  streamUrl         String?
+  status            CameraStatus @default(UNKNOWN)
+  lastSeenAt        DateTime?
+  createdAt         DateTime     @default(now())
+}

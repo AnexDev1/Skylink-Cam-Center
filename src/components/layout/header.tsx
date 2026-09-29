@@ -5,22 +5,32 @@ import { Logo } from "@/components/brand/logo"
 import { Wordmark } from "@/components/brand/wordmark"
 import { ThemeToggle } from "@/components/layout/theme-toggle"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { signOutAction } from "@/server/auth-actions"
+import type { SessionUser } from "@/types/auth"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
-  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 
 type HeaderProps = {
+  user: SessionUser
   onOpenMobileNav: () => void
 }
 
-export function Header({ onOpenMobileNav }: HeaderProps) {
+function initials(name?: string | null) {
+  const parts = (name ?? "Skylink").split(" ").filter(Boolean)
+  return parts
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("")
+}
+
+export function Header({ user, onOpenMobileNav }: HeaderProps) {
   return (
     <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-border bg-sl-surface px-4">
       <Button
@@ -47,7 +57,7 @@ export function Header({ onOpenMobileNav }: HeaderProps) {
           >
             <Avatar>
               <AvatarFallback className="bg-sl-gradient text-xs font-semibold text-white">
-                SL
+                {initials(user.name)}
               </AvatarFallback>
             </Avatar>
           </DropdownMenuTrigger>
@@ -55,18 +65,25 @@ export function Header({ onOpenMobileNav }: HeaderProps) {
             <DropdownMenuGroup>
               <DropdownMenuLabel>
                 <span className="block text-sm font-semibold text-foreground">
-                  Skylink Operator
+                  {user.name}
                 </span>
                 <span className="block text-xs font-normal text-muted-foreground">
-                  operator@skylink.local
+                  {user.email}
+                </span>
+                <span className="mt-1 block text-[0.65rem] font-semibold tracking-wide text-sl-primary uppercase">
+                  {user.role}
                 </span>
               </DropdownMenuLabel>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
-            <DropdownMenuGroup>
-              <DropdownMenuItem>Profile</DropdownMenuItem>
-              <DropdownMenuItem>Sign out</DropdownMenuItem>
-            </DropdownMenuGroup>
+            <form action={signOutAction}>
+              <button
+                type="submit"
+                className="flex w-full items-center rounded-md px-1.5 py-1 text-left text-sm outline-none hover:bg-accent hover:text-accent-foreground"
+              >
+                Sign out
+              </button>
+            </form>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
