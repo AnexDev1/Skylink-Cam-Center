@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import { decrypt } from "@/lib/crypto"
-import { prisma } from "@/server/db"
-import { onvifFailure, requireApiUser, unauthorized } from "@/server/cameras"
+import { authorize, findScopedCamera, notFound } from "@/server/access"
+import { onvifFailure } from "@/server/cameras"
 import { homeCamera, moveCamera, ptzDirections, stopCamera, type PtzDirection } from "@/server/onvif/ptz"
 
 export const runtime = "nodejs"
@@ -10,19 +10,12 @@ export async function POST(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
-  const user = await requireApiUser()
-  if (!user) return unauthorized()
+  const { actor, response } = await authorize("control")
+  if (!actor) return response
 
   const { id } = await context.params
-  const camera = await prisma.camera.findFirst({
-    where: { id, site: { organizationId: user.organizationId } },
-  })
-  if (!camera) {
-    return NextResponse.json(
-      { error: "Camera not found.", code: "NOT_FOUND" },
-      { status: 404 },
-    )
-  }
+  const camera = await findScopedCamera(actor, id)
+  if (!camera) return notFound("Camera")
 
   const body = (await request.json().catch(() => null)) as {
     action?: string

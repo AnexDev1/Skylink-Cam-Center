@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server"
 import { decrypt } from "@/lib/crypto"
-import { prisma } from "@/server/db"
-import { onvifFailure, requireApiUser, unauthorized } from "@/server/cameras"
+import { authorize, findScopedCamera, notFound } from "@/server/access"
+import { deviceFailure } from "@/server/cameras"
+import { fetchHikvisionSnapshot } from "@/server/hikvision/client"
 import { fetchCameraSnapshot } from "@/server/onvif/snapshot"
 
 export const runtime = "nodejs"
@@ -10,28 +11,31 @@ export async function POST(
   _request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
-  const user = await requireApiUser()
-  if (!user) return unauthorized()
+  const { actor, response } = await authorize("view")
+  if (!actor) return response
 
   const { id } = await context.params
-  const camera = await prisma.camera.findFirst({
-    where: { id, site: { organizationId: user.organizationId } },
-  })
-  if (!camera) {
-    return NextResponse.json(
-      { error: "Camera not found.", code: "NOT_FOUND" },
-      { status: 404 },
-    )
-  }
+  const camera = await findScopedCamera(actor, id)
+  if (!camera) return notFound("Camera")
 
   try {
-    const image = await fetchCameraSnapshot({
-      id: camera.id,
-      ipAddress: camera.ipAddress,
-      onvifPort: camera.onvifPort,
-      username: camera.username,
-      password: decrypt(camera.encryptedPassword),
-    })
+    const password = decrypt(camera.encryptedPassword)
+    const image =
+      camera.protocol === "ISAPI"
+        ? await fetchHikvisionSnapshot({
+            ipAddress: camera.ipAddress,
+            onvifPort: camera.onvifPort,
+            channel: camera.channel,
+            username: camera.username,
+            password,
+          })
+        : await fetchCameraSnapshot({
+            id: camera.id,
+            ipAddress: camera.ipAddress,
+            onvifPort: camera.onvifPort,
+            username: camera.username,
+            password,
+          })
     return new NextResponse(new Uint8Array(image), {
       headers: {
         "Content-Type": "image/jpeg",
@@ -39,6 +43,6 @@ export async function POST(
       },
     })
   } catch (error) {
-    return onvifFailure(error)
+    return deviceFailure(error)
   }
 }

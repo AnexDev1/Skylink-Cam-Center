@@ -1,14 +1,8 @@
 import { NextResponse } from "next/server"
-import { auth } from "@/auth"
 import { prisma } from "@/server/db"
+import { DeviceError } from "@/server/hikvision/errors"
 import { OnvifError } from "@/server/onvif/errors"
 import type { CameraStatus } from "@/generated/prisma/client"
-
-export async function requireApiUser() {
-  const session = await auth()
-  if (!session?.user?.id || !session.user.organizationId) return null
-  return session.user
-}
 
 export function unauthorized() {
   return NextResponse.json(
@@ -37,6 +31,13 @@ export function onvifFailure(error: unknown) {
   )
 }
 
+export function deviceFailure(error: unknown) {
+  if (!(error instanceof DeviceError)) return onvifFailure(error)
+  const status =
+    error.code === "AUTH_FAILED" ? 401 : error.code === "UNREACHABLE" ? 504 : 502
+  return NextResponse.json({ error: error.message, code: error.code }, { status })
+}
+
 export type CameraDto = {
   id: string
   siteId: string
@@ -45,6 +46,9 @@ export type CameraDto = {
   model: string
   ipAddress: string
   onvifPort: number
+  protocol: string
+  rtspPort: number
+  channel: number
   username: string
   streamUrl: string | null
   firmware: string
@@ -61,6 +65,9 @@ export function toCameraDto(camera: {
   model: string
   ipAddress: string
   onvifPort: number
+  protocol: string
+  rtspPort: number
+  channel: number
   username: string
   streamUrl: string | null
   firmware: string
@@ -76,6 +83,9 @@ export function toCameraDto(camera: {
     model: camera.model,
     ipAddress: camera.ipAddress,
     onvifPort: camera.onvifPort,
+    protocol: camera.protocol,
+    rtspPort: camera.rtspPort,
+    channel: camera.channel,
     username: camera.username,
     streamUrl: camera.streamUrl,
     firmware: camera.firmware,
@@ -99,6 +109,7 @@ export async function saveCameraState(
     name?: string
     username?: string
     encryptedPassword?: string
+    siteId?: string
   },
 ) {
   const updated = await prisma.camera.update({ where: { id }, data })

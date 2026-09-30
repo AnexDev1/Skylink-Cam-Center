@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server"
-import { prisma } from "@/server/db"
-import { requireApiUser, unauthorized } from "@/server/cameras"
+import { authorize, findScopedCamera, notFound } from "@/server/access"
 import { StreamError, unregisterStream } from "@/server/streaming"
 
 export const runtime = "nodejs"
@@ -9,20 +8,12 @@ export async function POST(
   _request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
-  const user = await requireApiUser()
-  if (!user) return unauthorized()
+  const { actor, response } = await authorize("view")
+  if (!actor) return response
 
   const { id } = await context.params
-  const camera = await prisma.camera.findFirst({
-    where: { id, site: { organizationId: user.organizationId } },
-    select: { id: true },
-  })
-  if (!camera) {
-    return NextResponse.json(
-      { error: "Camera not found.", code: "NOT_FOUND" },
-      { status: 404 },
-    )
-  }
+  const camera = await findScopedCamera(actor, id)
+  if (!camera) return notFound("Camera")
 
   try {
     await unregisterStream(camera.id)

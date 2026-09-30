@@ -1,6 +1,7 @@
 "use client"
 
 import { Menu } from "lucide-react"
+import { AlertBell } from "@/components/alerts/alert-bell"
 import { Logo } from "@/components/brand/logo"
 import { Wordmark } from "@/components/brand/wordmark"
 import { ThemeToggle } from "@/components/layout/theme-toggle"
@@ -19,6 +20,7 @@ import {
 
 type HeaderProps = {
   user: SessionUser
+  unreadAlerts: number
   onOpenMobileNav: () => void
 }
 
@@ -30,7 +32,7 @@ function initials(name?: string | null) {
     .join("")
 }
 
-export function Header({ user, onOpenMobileNav }: HeaderProps) {
+export function Header({ user, unreadAlerts, onOpenMobileNav }: HeaderProps) {
   return (
     <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-border bg-sl-surface px-4">
       <Button
@@ -49,6 +51,7 @@ export function Header({ user, onOpenMobileNav }: HeaderProps) {
       </div>
 
       <div className="ml-auto flex items-center gap-2">
+        <AlertBell initialUnread={unreadAlerts} />
         <ThemeToggle />
         <DropdownMenu>
           <DropdownMenuTrigger

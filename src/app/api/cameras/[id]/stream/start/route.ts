@@ -1,14 +1,13 @@
 import { NextResponse } from "next/server"
 import { decrypt } from "@/lib/crypto"
-import { prisma } from "@/server/db"
+import { authorize, findScopedCamera, notFound } from "@/server/access"
 import {
-  onvifFailure,
-  requireApiUser,
+  deviceFailure,
   saveCameraState,
   toCameraDto,
-  unauthorized,
 } from "@/server/cameras"
-import { connectToCamera } from "@/server/onvif"
+import { connectStored } from "@/server/devices/connect"
+import { DeviceError } from "@/server/hikvision/errors"
 import { mapOnvifError } from "@/server/onvif/errors"
 import { StreamError, registerStream } from "@/server/streaming"
 
@@ -38,27 +37,23 @@ export async function POST(
   _request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
-  const user = await requireApiUser()
-  if (!user) return unauthorized()
+  const { actor, response } = await authorize("view")
+  if (!actor) return response
 
   const { id } = await context.params
-  const camera = await prisma.camera.findFirst({
-    where: { id, site: { organizationId: user.organizationId } },
-  })
-  if (!camera) {
-    return NextResponse.json(
-      { error: "Camera not found.", code: "NOT_FOUND" },
-      { status: 404 },
-    )
-  }
+  const camera = await findScopedCamera(actor, id)
+  if (!camera) return notFound("Camera")
 
   try {
-    const connected = await connectToCamera(
-      camera.ipAddress,
-      camera.onvifPort,
-      camera.username,
-      decrypt(camera.encryptedPassword),
-    )
+    const connected = await connectStored({
+      protocol: camera.protocol,
+      ipAddress: camera.ipAddress,
+      onvifPort: camera.onvifPort,
+      rtspPort: camera.rtspPort,
+      channel: camera.channel,
+      username: camera.username,
+      password: decrypt(camera.encryptedPassword),
+    })
     if (!connected.streamUri) {
       throw new StreamError(
         "STREAM_NO_SOURCE",
@@ -88,9 +83,13 @@ export async function POST(
   } catch (error) {
     if (error instanceof StreamError) return streamFailure(error)
     const mapped = mapOnvifError(error)
+    const offline =
+      mapped.code === "ONVIF_UNREACHABLE" ||
+      (error instanceof DeviceError &&
+        (error.code === "UNREACHABLE" || error.code === "RTSP_UNREACHABLE"))
     await saveCameraState(camera.id, camera.status, {
-      status: mapped.code === "ONVIF_UNREACHABLE" ? "OFFLINE" : "UNKNOWN",
+      status: offline ? "OFFLINE" : "UNKNOWN",
     })
-    return onvifFailure(mapped)
+    return deviceFailure(error)
   }
 }

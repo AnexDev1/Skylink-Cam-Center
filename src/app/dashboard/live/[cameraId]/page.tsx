@@ -3,27 +3,28 @@ import { notFound, redirect } from "next/navigation"
 import { PtzControls } from "@/components/live/ptz-controls"
 import { SnapshotButton } from "@/components/live/snapshot-button"
 import { StreamPlayer } from "@/components/live/stream-player"
-import { auth } from "@/auth"
 import { prisma } from "@/server/db"
 import { toCameraDto } from "@/server/cameras"
+import { accessibleSiteWhere, canControl, loadActor } from "@/server/access"
 
 export default async function CameraLivePage({
   params,
 }: {
   params: Promise<{ cameraId: string }>
 }) {
-  const session = await auth()
-  if (!session?.user) redirect("/login")
+  const actor = await loadActor()
+  if (!actor) redirect("/login")
 
   const { cameraId } = await params
   const camera = await prisma.camera.findFirst({
     where: {
       id: cameraId,
-      site: { organizationId: session.user.organizationId },
+      site: await accessibleSiteWhere(actor),
     },
   })
   if (!camera) notFound()
   const dto = toCameraDto(camera)
+  const allowPtz = dto.ptzSupported && canControl(actor.role)
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-4">
@@ -36,9 +37,9 @@ export default async function CameraLivePage({
         </Link>
       </div>
       <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_18rem]">
-        <StreamPlayer camera={dto} autoStart />
+        <StreamPlayer camera={dto} />
         <div className="flex flex-col gap-4">
-          {dto.ptzSupported ? <PtzControls cameraId={dto.id} /> : null}
+          {allowPtz ? <PtzControls cameraId={dto.id} /> : null}
           <SnapshotButton cameraId={dto.id} cameraName={dto.name} />
         </div>
       </div>

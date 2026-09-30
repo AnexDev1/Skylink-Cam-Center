@@ -1,13 +1,14 @@
 import { NextResponse } from "next/server"
-import { onvifFailure, requireApiUser, unauthorized } from "@/server/cameras"
+import { authorize } from "@/server/access"
+import { onvifFailure } from "@/server/cameras"
 import { discoverCameras } from "@/server/onvif"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
 export async function POST() {
-  const user = await requireApiUser()
-  if (!user) return unauthorized()
+  const { actor, response } = await authorize("manage")
+  if (!actor) return response
 
   try {
     const devices = await discoverCameras()

@@ -6,6 +6,7 @@ import { useRef, useState, type FormEvent } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { PasswordInput } from "@/components/ui/password-input"
 import type { CameraDto } from "@/server/cameras"
 
 type StatusLog = {
@@ -29,9 +30,11 @@ const statusStyle = {
 export function CameraDetail({
   camera,
   logs,
+  canManage,
 }: {
   camera: CameraDto
   logs: StatusLog[]
+  canManage: boolean
 }) {
   const router = useRouter()
   const dialogRef = useRef<HTMLDialogElement>(null)
@@ -94,7 +97,9 @@ export function CameraDetail({
         </Link>
         <h1 className="mt-2 text-2xl">{camera.name}</h1>
         <p className="mt-1 text-sm text-sl-text-muted">
-          {camera.ipAddress}:{camera.onvifPort}
+          {camera.protocol === "ISAPI"
+            ? `${camera.ipAddress} · Hikvision ISAPI channel ${camera.channel}`
+            : `${camera.ipAddress}:${camera.onvifPort}`}
         </p>
       </div>
 
@@ -113,7 +118,14 @@ export function CameraDetail({
         <Info label="Brand" value={camera.brand || "Unknown"} />
         <Info label="Model" value={camera.model || "Unknown"} />
         <Info label="Firmware" value={camera.firmware || "Unknown"} />
-        <Info label="IP address" value={`${camera.ipAddress}:${camera.onvifPort}`} />
+        <Info
+          label="IP address"
+          value={
+            camera.protocol === "ISAPI"
+              ? `${camera.ipAddress} HTTP ${camera.onvifPort}, RTSP ${camera.rtspPort}, channel ${camera.channel}`
+              : `${camera.ipAddress}:${camera.onvifPort}`
+          }
+        />
         <div>
           <p className="text-xs tracking-wide text-sl-text-muted uppercase">Status</p>
           <p className="mt-1">
@@ -148,6 +160,8 @@ export function CameraDetail({
         )}
       </section>
 
+      {canManage ? (
+      <>
       <form
         className="grid gap-3 rounded-xl border border-border bg-sl-surface p-5 sm:grid-cols-2"
         onSubmit={(event) => void save(event)}
@@ -168,9 +182,8 @@ export function CameraDetail({
         </div>
         <div className="flex flex-col gap-1.5 sm:col-span-2">
           <Label htmlFor="camera-password">Password</Label>
-          <Input
+          <PasswordInput
             id="camera-password"
-            type="password"
             value={password}
             placeholder="Leave blank to keep the current password"
             onChange={(event) => setPassword(event.target.value)}
@@ -203,6 +216,8 @@ export function CameraDetail({
           </Button>
         </div>
       </dialog>
+      </>
+      ) : null}
     </div>
   )
 }
