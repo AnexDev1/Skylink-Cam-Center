@@ -10,10 +10,12 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { isNavActive, navItems } from "@/lib/navigation"
+import { isNavActive, navForRole } from "@/lib/navigation"
+import type { Role } from "@/types/auth"
 import { cn } from "cn"
 
 type SidebarProps = {
+  role: Role
   collapsed: boolean
   mobileOpen: boolean
   onToggleCollapsed: () => void
@@ -21,12 +23,14 @@ type SidebarProps = {
 }
 
 export function Sidebar({
+  role,
   collapsed,
   mobileOpen,
   onToggleCollapsed,
   onNavigate,
 }: SidebarProps) {
   const pathname = usePathname()
+  const items = navForRole(role)
 
   return (
     <aside
@@ -56,7 +60,7 @@ export function Sidebar({
       </div>
 
       <nav className="flex flex-1 flex-col gap-1 p-2" aria-label="Primary">
-        {navItems.map((item) => {
+        {items.map((item) => {
           const active = isNavActive(pathname, item.href)
           const Icon = item.icon
           const link = (

@@ -3,6 +3,8 @@
 import { useState, useSyncExternalStore } from "react"
 import { Header } from "@/components/layout/header"
 import { Sidebar } from "@/components/layout/sidebar"
+import { StreamSessionProvider } from "@/components/live/stream-session"
+import type { CameraDto } from "@/server/cameras"
 import type { SessionUser } from "@/types/auth"
 import { cn } from "cn"
 
@@ -21,9 +23,13 @@ function readCollapsed() {
 export function AppShell({
   children,
   user,
+  unreadAlerts,
+  cameras,
 }: {
   children: React.ReactNode
   user: SessionUser
+  unreadAlerts: number
+  cameras: CameraDto[]
 }) {
   const collapsed = useSyncExternalStore(
     subscribeCollapsed,
@@ -40,6 +46,7 @@ export function AppShell({
   return (
     <div className="min-h-svh bg-sl-bg">
       <Sidebar
+        role={user.role}
         collapsed={collapsed}
         mobileOpen={mobileOpen}
         onToggleCollapsed={toggleCollapsed}
@@ -61,8 +68,14 @@ export function AppShell({
           collapsed && "lg:pl-[4.5rem]",
         )}
       >
-        <Header user={user} onOpenMobileNav={() => setMobileOpen(true)} />
-        <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8">{children}</main>
+        <Header
+          user={user}
+          unreadAlerts={unreadAlerts}
+          onOpenMobileNav={() => setMobileOpen(true)}
+        />
+        <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8">
+          <StreamSessionProvider cameras={cameras}>{children}</StreamSessionProvider>
+        </main>
       </div>
     </div>
   )

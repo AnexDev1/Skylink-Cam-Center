@@ -10,6 +10,7 @@ export type DiscoveredCamera = {
   xaddr: string
   name: string | null
   hardware: string | null
+  scopes: string
 }
 
 export type ConnectedCamera = {
@@ -92,6 +93,7 @@ function parseProbe(device: unknown, reportedAddress?: string): DiscoveredCamera
     xaddr,
     name: scopeValue(probe?.scopes, "name"),
     hardware: scopeValue(probe?.scopes, "hardware"),
+    scopes: probe?.scopes ?? "",
   }
 }
 

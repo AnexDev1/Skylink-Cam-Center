@@ -1,22 +1,22 @@
 import { notFound, redirect } from "next/navigation"
 import { CameraDetail } from "@/components/cameras/camera-detail"
-import { auth } from "@/auth"
 import { prisma } from "@/server/db"
 import { toCameraDto } from "@/server/cameras"
+import { accessibleSiteWhere, canManage, loadActor } from "@/server/access"
 
 export default async function CameraDetailPage({
   params,
 }: {
   params: Promise<{ id: string }>
 }) {
-  const session = await auth()
-  if (!session?.user) redirect("/login")
+  const actor = await loadActor()
+  if (!actor) redirect("/login")
 
   const { id } = await params
   const camera = await prisma.camera.findFirst({
     where: {
       id,
-      site: { organizationId: session.user.organizationId },
+      site: await accessibleSiteWhere(actor),
     },
     include: {
       statusLogs: { orderBy: { createdAt: "desc" }, take: 20 },
@@ -26,6 +26,7 @@ export default async function CameraDetailPage({
 
   return (
     <CameraDetail
+      canManage={canManage(actor.role)}
       camera={toCameraDto(camera)}
       logs={camera.statusLogs.map((log) => ({
         id: log.id,

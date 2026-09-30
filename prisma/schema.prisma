@@ -19,6 +19,13 @@ enum CameraStatus {
   UNKNOWN
 }
 
+enum EventType {
+  MOTION
+  OFFLINE
+  ONLINE
+  TAMPER
+}
+
 model Organization {
   id        String   @id @default(cuid())
   name      String
@@ -36,6 +43,7 @@ model User {
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   createdAt      DateTime     @default(now())
+  siteAccess     SiteAccess[]
 }
 
 model Site {
@@ -46,6 +54,17 @@ model Site {
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   createdAt      DateTime     @default(now())
   cameras        Camera[]
+  access         SiteAccess[]
+}
+
+model SiteAccess {
+  userId String
+  siteId String
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  site   Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@id([userId, siteId])
+  @@index([siteId])
 }
 
 model Camera {
@@ -57,6 +76,9 @@ model Camera {
   model             String
   ipAddress         String
   onvifPort         Int          @default(80)
+  protocol          String       @default("ONVIF")
+  rtspPort          Int          @default(554)
+  channel           Int          @default(1)
   username          String
   encryptedPassword String
   streamUrl         String?
@@ -66,6 +88,7 @@ model Camera {
   lastSeenAt        DateTime?
   createdAt         DateTime     @default(now())
   statusLogs        CameraStatusLog[]
+  events            Event[]
 }
 
 model CameraStatusLog {
@@ -76,4 +99,17 @@ model CameraStatusLog {
   createdAt DateTime     @default(now())
 
   @@index([cameraId, createdAt])
+}
+
+model Event {
+  id           String    @id @default(cuid())
+  cameraId     String
+  camera       Camera    @relation(fields: [cameraId], references: [id], onDelete: Cascade)
+  type         EventType
+  message      String
+  createdAt    DateTime  @default(now())
+  acknowledged Boolean   @default(false)
+
+  @@index([cameraId, createdAt])
+  @@index([acknowledged, createdAt])
 }

@@ -2,10 +2,12 @@
 
 import Link from "next/link"
 import { useState } from "react"
+import { QrScan } from "@/components/cameras/qr-scan"
 import { PageHeader } from "@/components/layout/page-header"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { PasswordInput } from "@/components/ui/password-input"
 import type { CameraDto } from "@/server/cameras"
 
 type SiteOption = { id: string; name: string }
@@ -24,6 +26,9 @@ const emptyManual = {
   name: "",
   ipAddress: "",
   onvifPort: "80",
+  protocol: "ONVIF" as "ONVIF" | "ISAPI",
+  rtspPort: "554",
+  channel: "1",
   username: "",
   password: "",
 }
@@ -31,9 +36,11 @@ const emptyManual = {
 export function CamerasManager({
   sites,
   initialCameras,
+  canManage,
 }: {
   sites: SiteOption[]
   initialCameras: CameraDto[]
+  canManage: boolean
 }) {
   const [siteId, setSiteId] = useState(sites[0]?.id ?? "")
   const [cameras, setCameras] = useState(initialCameras)
@@ -103,6 +110,9 @@ export function CamerasManager({
         name: input.name,
         ipAddress: input.ipAddress,
         onvifPort: Number(input.onvifPort),
+        protocol: input.protocol,
+        rtspPort: Number(input.rtspPort),
+        channel: Number(input.channel),
         username: input.username,
         password: input.password,
       }),
@@ -158,7 +168,11 @@ export function CamerasManager({
     <div className="space-y-8">
       <PageHeader
         title="Cameras"
-        description="Discover ONVIF cameras on this subnet, or add one by address. Credentials are checked with the camera before they are stored."
+        description={
+          canManage
+            ? "Scan a QR code, scan the network, or type the IP address. Hikvision recorders without ONVIF can be added with ISAPI and RTSP. The camera is saved only after the username and password are checked."
+            : "Cameras on the sites assigned to you."
+        }
       />
 
       {!sites.length ? (
@@ -194,6 +208,24 @@ export function CamerasManager({
       )}
       {message && <p className="text-sm text-sl-text-muted">{message}</p>}
 
+      {canManage ? (
+      <>
+      <QrScan
+        disabled={!siteId}
+        onApply={(draft) => {
+          setManual({
+            ...emptyManual,
+            name: draft.name,
+            ipAddress: draft.ipAddress,
+            onvifPort: draft.onvifPort,
+            protocol: draft.protocol,
+            username: draft.username,
+            password: draft.password,
+          })
+          setMessage(draft.note)
+          setError(null)
+        }}
+      />
       <section className="overflow-hidden rounded-xl border border-border bg-sl-surface shadow-sm">
         <div className="h-1.5 bg-sl-gradient" />
         <div className="flex flex-wrap items-center justify-between gap-3 p-5">
@@ -265,12 +297,40 @@ export function CamerasManager({
           <div className="sm:col-span-2">
             <h2 className="text-base">Add camera manually</h2>
             <p className="mt-1 text-sm text-sl-text-muted">
-              Use this when discovery cannot see the camera.
+              Use ONVIF when the camera serves it. Use Hikvision ISAPI when the recorder only exposes ISAPI and an RTSP stream.
             </p>
+          </div>
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label htmlFor="manual-connection">Connection</Label>
+            <select
+              id="manual-connection"
+              value={manual.protocol}
+              onChange={(event) =>
+                setManual({
+                  ...manual,
+                  protocol: event.target.value === "ISAPI" ? "ISAPI" : "ONVIF",
+                })
+              }
+              className="h-9 w-full rounded-lg border border-input bg-sl-surface px-3 text-sm"
+            >
+              <option value="ONVIF">ONVIF</option>
+              <option value="ISAPI">Hikvision ISAPI + RTSP</option>
+            </select>
           </div>
           <Field prefix="manual" label="Name" value={manual.name} onChange={(name) => setManual({ ...manual, name })} />
           <Field prefix="manual" label="IP address" value={manual.ipAddress} onChange={(ipAddress) => setManual({ ...manual, ipAddress })} />
-          <Field prefix="manual" label="ONVIF port" value={manual.onvifPort} onChange={(onvifPort) => setManual({ ...manual, onvifPort })} />
+          <Field
+            prefix="manual"
+            label={manual.protocol === "ISAPI" ? "HTTP port" : "ONVIF port"}
+            value={manual.onvifPort}
+            onChange={(onvifPort) => setManual({ ...manual, onvifPort })}
+          />
+          {manual.protocol === "ISAPI" ? (
+            <>
+              <Field prefix="manual" label="RTSP port" value={manual.rtspPort} onChange={(rtspPort) => setManual({ ...manual, rtspPort })} />
+              <Field prefix="manual" label="Channel" value={manual.channel} onChange={(channel) => setManual({ ...manual, channel })} />
+            </>
+          ) : null}
           <Field prefix="manual" label="Username" value={manual.username} onChange={(username) => setManual({ ...manual, username })} />
           <Field prefix="manual" label="Password" type="password" value={manual.password} onChange={(password) => setManual({ ...manual, password })} />
           <div className="flex items-end">
@@ -280,6 +340,8 @@ export function CamerasManager({
           </div>
         </form>
       </section>
+      </>
+      ) : null}
 
       <section className="overflow-hidden rounded-xl border border-border bg-sl-surface">
         <div className="border-b border-border px-5 py-4">
@@ -312,7 +374,9 @@ export function CamerasManager({
                       {camera.brand} {camera.model}
                     </td>
                     <td className="px-4 py-3">
-                      {camera.ipAddress}:{camera.onvifPort}
+                      {camera.protocol === "ISAPI"
+                        ? `${camera.ipAddress} · ISAPI ch ${camera.channel}`
+                        : `${camera.ipAddress}:${camera.onvifPort}`}
                     </td>
                     <td className="px-4 py-3">
                       <StatusBadge status={camera.status} />
@@ -340,22 +404,26 @@ export function CamerasManager({
                         >
                           Live
                         </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={busyId === camera.id}
-                          onClick={() => void testConnection(camera.id)}
-                        >
-                          {busyId === camera.id ? "Testing…" : "Test Connection"}
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          disabled={busyId === camera.id}
-                          onClick={() => void removeCamera(camera.id)}
-                        >
-                          Remove
-                        </Button>
+                        {canManage ? (
+                          <>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={busyId === camera.id}
+                              onClick={() => void testConnection(camera.id)}
+                            >
+                              {busyId === camera.id ? "Testing…" : "Test Connection"}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              disabled={busyId === camera.id}
+                              onClick={() => void removeCamera(camera.id)}
+                            >
+                              Remove
+                            </Button>
+                          </>
+                        ) : null}
                       </div>
                     </td>
                   </tr>
@@ -428,13 +496,22 @@ function Field({
   return (
     <div className="space-y-1.5">
       <Label htmlFor={id}>{label}</Label>
-      <Input
-        id={id}
-        type={type}
-        value={value}
-        required
-        onChange={(event) => onChange(event.target.value)}
-      />
+      {type === "password" ? (
+        <PasswordInput
+          id={id}
+          value={value}
+          required
+          onChange={(event) => onChange(event.target.value)}
+        />
+      ) : (
+        <Input
+          id={id}
+          type={type}
+          value={value}
+          required
+          onChange={(event) => onChange(event.target.value)}
+        />
+      )}
     </div>
   )
 }

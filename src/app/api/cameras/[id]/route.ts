@@ -1,14 +1,13 @@
 import { NextResponse } from "next/server"
 import { decrypt, encrypt } from "@/lib/crypto"
 import { prisma } from "@/server/db"
+import { authorize, findScopedCamera, notFound } from "@/server/access"
 import {
-  onvifFailure,
-  requireApiUser,
+  deviceFailure,
   saveCameraState,
   toCameraDto,
-  unauthorized,
 } from "@/server/cameras"
-import { connectToCamera } from "@/server/onvif"
+import { connectStored } from "@/server/devices/connect"
 import { closeCamera } from "@/server/onvif/session"
 import { unregisterStream } from "@/server/streaming"
 
@@ -18,20 +17,12 @@ export async function DELETE(
   _request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
-  const user = await requireApiUser()
-  if (!user) return unauthorized()
+  const { actor, response } = await authorize("manage")
+  if (!actor) return response
 
   const { id } = await context.params
-  const camera = await prisma.camera.findFirst({
-    where: { id, site: { organizationId: user.organizationId } },
-    select: { id: true },
-  })
-  if (!camera) {
-    return NextResponse.json(
-      { error: "Camera not found.", code: "NOT_FOUND" },
-      { status: 404 },
-    )
-  }
+  const camera = await findScopedCamera(actor, id)
+  if (!camera) return notFound("Camera")
 
   await unregisterStream(camera.id).catch(() => undefined)
   closeCamera(camera.id)
@@ -43,27 +34,38 @@ export async function PATCH(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
-  const user = await requireApiUser()
-  if (!user) return unauthorized()
+  const { actor, response } = await authorize("manage")
+  if (!actor) return response
 
   const { id } = await context.params
-  const camera = await prisma.camera.findFirst({
-    where: { id, site: { organizationId: user.organizationId } },
-  })
-  if (!camera) {
-    return NextResponse.json(
-      { error: "Camera not found.", code: "NOT_FOUND" },
-      { status: 404 },
-    )
-  }
+  const camera = await findScopedCamera(actor, id)
+  if (!camera) return notFound("Camera")
 
   const body = (await request.json().catch(() => null)) as {
     name?: string
     username?: string
     password?: string
+    siteId?: string
   } | null
+  const nextSiteId = body?.siteId?.trim() ?? ""
+  if (nextSiteId) {
+    const site = await prisma.site.findFirst({
+      where: { id: nextSiteId, organizationId: actor.organizationId },
+      select: { id: true },
+    })
+    if (!site) return notFound("Site")
+  }
+
   const name = body?.name?.trim() ?? ""
   const username = body?.username?.trim() ?? ""
+  if (!name && !username && !body?.password && nextSiteId) {
+    const updated = await prisma.camera.update({
+      where: { id: camera.id },
+      data: { siteId: nextSiteId },
+    })
+    return NextResponse.json({ camera: toCameraDto(updated) })
+  }
+
   const password = body?.password?.length ? body.password : decrypt(camera.encryptedPassword)
 
   if (!name || !username) {
@@ -74,16 +76,20 @@ export async function PATCH(
   }
 
   try {
-    const connected = await connectToCamera(
-      camera.ipAddress,
-      camera.onvifPort,
+    const connected = await connectStored({
+      protocol: camera.protocol,
+      ipAddress: camera.ipAddress,
+      onvifPort: camera.onvifPort,
+      rtspPort: camera.rtspPort,
+      channel: camera.channel,
       username,
       password,
-    )
+    })
     closeCamera(camera.id)
     const updated = await saveCameraState(camera.id, camera.status, {
       name,
       username,
+      ...(nextSiteId ? { siteId: nextSiteId } : {}),
       encryptedPassword: encrypt(password),
       brand: connected.manufacturer,
       model: connected.model,
@@ -95,6 +101,6 @@ export async function PATCH(
     })
     return NextResponse.json({ camera: toCameraDto(updated) })
   } catch (error) {
-    return onvifFailure(error)
+    return deviceFailure(error)
   }
 }
