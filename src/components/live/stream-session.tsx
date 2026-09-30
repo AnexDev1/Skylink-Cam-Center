@@ -20,6 +20,8 @@ type Runtime = {
   hidden: HTMLVideoElement | null
   starting: boolean
   stopped: boolean
+  muted: boolean
+  stall: number | null
 }
 
 const CONNECTING: StreamSnapshot = { mode: "connecting", error: null, stream: null }
@@ -80,20 +82,51 @@ async function readError(response: Response) {
     : (body?.error ?? "Request failed.")
 }
 
+function parkVideo(video: HTMLVideoElement) {
+  video.className = ""
+  video.style.cssText = "position:fixed;width:160px;height:90px;opacity:0;pointer-events:none"
+  video.setAttribute("aria-hidden", "true")
+  document.body.appendChild(video)
+}
+
 function holdStream(runtime: Runtime, stream: MediaStream) {
   const video = document.createElement("video")
-  video.muted = true
+  video.muted = runtime.muted
   video.autoplay = true
   video.playsInline = true
+  video.disablePictureInPicture = true
   video.srcObject = stream
-  video.setAttribute("aria-hidden", "true")
-  video.style.cssText = "position:fixed;width:160px;height:90px;opacity:0;pointer-events:none"
-  document.body.appendChild(video)
+  parkVideo(video)
   runtime.hidden = video
   void video.play().catch(() => undefined)
 }
 
+export function claimVideo(cameraId: string, slot: HTMLElement) {
+  const runtime = runtimes.get(cameraId)
+  const video = runtime?.hidden
+  if (!video) return () => undefined
+  video.className = "h-full w-full object-contain"
+  video.style.cssText = ""
+  video.removeAttribute("aria-hidden")
+  video.muted = runtime.muted
+  slot.appendChild(video)
+  void video.play().catch(() => undefined)
+  return () => {
+    if (runtime.hidden !== video) return
+    parkVideo(video)
+  }
+}
+
+export function setStreamMuted(cameraId: string, muted: boolean) {
+  const runtime = runtimes.get(cameraId)
+  if (!runtime) return
+  runtime.muted = muted
+  if (runtime.hidden) runtime.hidden.muted = muted
+}
+
 function closeRuntime(runtime: Runtime) {
+  if (runtime.stall !== null) window.clearInterval(runtime.stall)
+  runtime.stall = null
   runtime.peer?.close()
   runtime.peer = null
   runtime.hls?.destroy()
@@ -106,12 +139,12 @@ async function playWebRtc(runtime: Runtime, url: string) {
   const peer = new RTCPeerConnection()
   runtime.peer = peer
   peer.addTransceiver("video", { direction: "recvonly" })
-  peer.addTransceiver("audio", { direction: "recvonly" })
   const trackReady = new Promise<MediaStream>((resolve, reject) => {
     const timeout = window.setTimeout(() => reject(new Error("WebRTC timed out")), 20000)
     peer.ontrack = (event) => {
       window.clearTimeout(timeout)
-      resolve(event.streams[0] ?? new MediaStream([event.track]))
+      const track = event.track
+      resolve(event.streams[0] ?? new MediaStream([track]))
     }
   })
   const offer = await peer.createOffer()
@@ -127,35 +160,34 @@ async function playWebRtc(runtime: Runtime, url: string) {
   return trackReady
 }
 
-function captureStream(video: HTMLVideoElement) {
-  const media = video as HTMLVideoElement & { captureStream?: () => MediaStream }
-  if (!media.captureStream) throw new Error("This browser cannot play HLS.")
-  return media.captureStream()
-}
-
 function playHls(runtime: Runtime, url: string) {
   const video = document.createElement("video")
-  video.muted = true
+  video.muted = runtime.muted
   video.autoplay = true
   video.playsInline = true
-  video.setAttribute("aria-hidden", "true")
-  video.style.cssText = "position:fixed;width:1px;height:1px;opacity:0;pointer-events:none"
-  document.body.appendChild(video)
+  video.disablePictureInPicture = true
+  parkVideo(video)
   runtime.hidden = video
 
   if (video.canPlayType("application/vnd.apple.mpegurl")) {
     video.src = url
-    return video.play().then(() => captureStream(video))
+    return video.play().then(() => undefined)
   }
   if (!Hls.isSupported()) throw new Error("This browser cannot play HLS.")
 
-  const hls = new Hls({ enableWorker: true })
+  const hls = new Hls({
+    enableWorker: true,
+    lowLatencyMode: true,
+    liveSyncDurationCount: 1,
+    maxBufferLength: 2,
+    backBufferLength: 0,
+  })
   runtime.hls = hls
   hls.loadSource(url)
   hls.attachMedia(video)
-  return new Promise<MediaStream>((resolve, reject) => {
+  return new Promise<void>((resolve, reject) => {
     hls.on(Hls.Events.MANIFEST_PARSED, () => {
-      void video.play().then(() => resolve(captureStream(video))).catch(reject)
+      void video.play().then(() => resolve()).catch(reject)
     })
     hls.on(Hls.Events.ERROR, (_event, data) => {
       if (!data.fatal) return
@@ -164,7 +196,51 @@ function playHls(runtime: Runtime, url: string) {
   })
 }
 
-async function ensure(camera: CameraDto) {
+function watchStall(camera: CameraDto, playback: Playback) {
+  const runtime = runtimes.get(camera.id)
+  if (!runtime) return
+  if (runtime.stall !== null) window.clearInterval(runtime.stall)
+  runtime.stall = window.setInterval(() => {
+    if (runtime.stopped || runtime.starting || runtimes.get(camera.id) !== runtime) return
+    const connection = runtime.peer?.connectionState
+    const track = runtime.hidden?.srcObject instanceof MediaStream
+      ? runtime.hidden.srcObject.getVideoTracks()[0]
+      : undefined
+    if (connection === "failed" || connection === "disconnected" || track?.readyState === "ended") {
+      void reconnect(camera, playback)
+    }
+  }, 2000)
+}
+
+async function reconnect(camera: CameraDto, playback: Playback) {
+  const runtime = runtimes.get(camera.id)
+  if (!runtime || runtime.stopped || runtime.starting) return
+  runtime.starting = true
+  const previous = runtime.peer
+  try {
+    const stream = await playWebRtc(runtime, playback.webrtc)
+    if (runtime.stopped || runtimes.get(camera.id) !== runtime) {
+      runtime.peer?.close()
+      return
+    }
+    previous?.close()
+    if (runtime.hidden) {
+      runtime.hidden.srcObject = stream
+      void runtime.hidden.play().catch(() => undefined)
+    } else {
+      holdStream(runtime, stream)
+    }
+    runtime.starting = false
+    setSnapshot(runtime, { mode: "webrtc", error: null, stream })
+  } catch {
+    if (runtimes.get(camera.id) !== runtime) return
+    runtime.peer?.close()
+    runtime.peer = previous
+    runtime.starting = false
+  }
+}
+
+async function ensure(camera: CameraDto, muted?: boolean) {
   const current = runtimes.get(camera.id)
   if (current?.stopped) return
   if (current && (current.starting || current.snapshot.mode === "webrtc" || current.snapshot.mode === "hls")) {
@@ -178,6 +254,8 @@ async function ensure(camera: CameraDto) {
     hidden: null,
     starting: true,
     stopped: false,
+    muted: muted ?? current?.muted ?? true,
+    stall: null,
   }
   runtimes.set(camera.id, runtime)
   emit()
@@ -197,16 +275,18 @@ async function ensure(camera: CameraDto) {
       holdStream(runtime, stream)
       runtime.starting = false
       setSnapshot(runtime, { mode: "webrtc", error: null, stream })
+      watchStall(camera, body.playback)
       return
     } catch {
       runtime.peer?.close()
       runtime.peer = null
     }
     try {
-      const stream = await playHls(runtime, body.playback.hls)
+      await playHls(runtime, body.playback.hls)
       if (runtime.stopped) return
       runtime.starting = false
-      setSnapshot(runtime, { mode: "hls", error: null, stream })
+      setSnapshot(runtime, { mode: "hls", error: null, stream: null })
+      watchStall(camera, body.playback)
     } catch {
       closeRuntime(runtime)
       runtime.starting = false

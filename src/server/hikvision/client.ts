@@ -71,11 +71,25 @@ function probePort(host: string, port: number) {
   })
 }
 
-async function digestGet(url: URL, username: string, password: string) {
+async function digestSend(
+  method: string,
+  url: URL,
+  username: string,
+  password: string,
+  body?: string,
+) {
   const uri = `${url.pathname}${url.search}`
+  const headers: Record<string, string> = {}
+  if (body) headers["Content-Type"] = "application/xml"
   let first: Response
   try {
-    first = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT_MS), redirect: "manual" })
+    first = await fetch(url, {
+      method,
+      headers,
+      body,
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+      redirect: "manual",
+    })
   } catch (error) {
     throw new DeviceError(
       "UNREACHABLE",
@@ -90,7 +104,7 @@ async function digestGet(url: URL, username: string, password: string) {
       "This recorder did not serve ISAPI. In System Service, turn ISAPI on and leave HTTP enabled.",
     )
   }
-  if (first.ok) return first
+  if (first.ok || first.status === 403) return first
 
   const challenge = first.headers.get("www-authenticate") ?? ""
   if (first.status !== 401 || !challenge.toLowerCase().startsWith("digest ")) {
@@ -103,7 +117,12 @@ async function digestGet(url: URL, username: string, password: string) {
   let second: Response
   try {
     second = await fetch(url, {
-      headers: { Authorization: digestHeader(challenge, "GET", uri, username, password) },
+      method,
+      headers: {
+        ...headers,
+        Authorization: digestHeader(challenge, method, uri, username, password),
+      },
+      body,
       signal: AbortSignal.timeout(TIMEOUT_MS),
     })
   } catch (error) {
@@ -124,6 +143,55 @@ async function digestGet(url: URL, username: string, password: string) {
     )
   }
   return second
+}
+
+async function digestGet(url: URL, username: string, password: string) {
+  return digestSend("GET", url, username, password)
+}
+
+async function useBrowserCodec(input: {
+  ipAddress: string
+  onvifPort: number
+  channel: number
+  username: string
+  password: string
+}) {
+  const url = new URL(
+    `http://${input.ipAddress}:${input.onvifPort}/ISAPI/Streaming/channels/${hikvisionStreamId(input.channel)}`,
+  )
+  const current = await digestGet(url, input.username, input.password)
+  const xml = await current.text()
+  if (!current.ok || /<videoCodecType>\s*H\.?264\s*<\/videoCodecType>/i.test(xml)) return
+  if (!/<videoCodecType>/i.test(xml)) return
+
+  const next = xml
+    .replace(/<videoCodecType>[^<]*<\/videoCodecType>/i, "<videoCodecType>H.264</videoCodecType>")
+    .replace(/<GovLength>\d+<\/GovLength>/i, "<GovLength>20</GovLength>")
+  const saved = await digestSend("PUT", url, input.username, input.password, next)
+  if (!saved.ok) return
+  await restartLiveVideo(input)
+}
+
+export async function restartLiveVideo(input: {
+  ipAddress: string
+  onvifPort: number
+  channel: number
+  username: string
+  password: string
+}) {
+  const url = new URL(
+    `http://${input.ipAddress}:${input.onvifPort}/ISAPI/Streaming/channels/${hikvisionStreamId(input.channel)}`,
+  )
+  const current = await digestGet(url, input.username, input.password)
+  const xml = await current.text()
+  if (!current.ok) return
+  const videoEnabled = /(<Video>[\s\S]*?<enabled>)(?:true|false)(<\/enabled>)/i
+  if (!videoEnabled.test(xml)) return
+  const off = xml.replace(videoEnabled, "$1false$2")
+  await digestSend("PUT", url, input.username, input.password, off)
+  await new Promise((resolve) => setTimeout(resolve, 500))
+  const on = xml.replace(videoEnabled, "$1true$2")
+  await digestSend("PUT", url, input.username, input.password, on)
 }
 
 export async function connectHikvision(input: {
@@ -151,12 +219,15 @@ export async function connectHikvision(input: {
     `http://${input.ipAddress}:${input.onvifPort}/ISAPI/Streaming/channels/${streamId}`,
   )
   const channelResponse = await digestGet(channelUrl, input.username, input.password)
+  await channelResponse.body?.cancel().catch(() => undefined)
   if (channelResponse.status === 404) {
     throw new DeviceError(
       "ISAPI_DISABLED",
       `Channel ${input.channel} is not available on this recorder.`,
     )
   }
+  // The browser can play H.264 directly. The main stream stays H.265 for recording.
+  await useBrowserCodec(input)
 
   const rtspOpen = await probePort(input.ipAddress, input.rtspPort)
   if (!rtspOpen) {

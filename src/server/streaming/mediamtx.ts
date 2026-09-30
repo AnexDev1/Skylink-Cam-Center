@@ -1,9 +1,17 @@
 import { spawn, type ChildProcess } from "node:child_process"
-import { existsSync } from "node:fs"
+import { existsSync, readdirSync, readFileSync } from "node:fs"
 import path from "node:path"
 import { StreamError } from "@/server/streaming/errors"
 
-const transcoders = new Map<string, ChildProcess>()
+type TranscodeJob = {
+  sourceUrl: string
+  playbackId: string
+  child: ChildProcess | null
+  closed: boolean
+}
+
+const transcoders = new Map<string, TranscodeJob>()
+const starting = new Map<string, Promise<PlaybackUrls>>()
 
 export type PlaybackUrls = {
   webrtc: string
@@ -83,8 +91,18 @@ async function upsertPath(name: string, body: string) {
   }
 }
 
+async function currentTracks(cameraId: string) {
+  const response = await control("/v3/paths/list", { method: "GET" })
+  if (!response.ok) return []
+  const body = (await response.json()) as {
+    items?: { name?: string; ready?: boolean; tracks?: string[] }[]
+  }
+  const item = body.items?.find((entry) => entry.name === cameraId)
+  return item?.ready && item.tracks?.length ? item.tracks : []
+}
+
 async function waitForTracks(cameraId: string) {
-  const deadline = Date.now() + 12000
+  const deadline = Date.now() + 20000
   while (Date.now() < deadline) {
     const response = await control("/v3/paths/list", { method: "GET" })
     if (response.ok) {
@@ -99,9 +117,29 @@ async function waitForTracks(cameraId: string) {
   return []
 }
 
-function startTranscode(cameraId: string, playbackId: string) {
-  const running = transcoders.get(playbackId)
-  if (running && running.exitCode === null) return
+function signalPublishers(playbackId: string) {
+  let entries: string[]
+  try {
+    entries = readdirSync("/proc")
+  } catch {
+    return
+  }
+  for (const entry of entries) {
+    if (!/^\d+$/.test(entry)) continue
+    const pid = Number(entry)
+    if (pid === process.pid) continue
+    try {
+      const text = readFileSync(`/proc/${pid}/cmdline`).toString("utf8")
+      if (!text.includes("ffmpeg") || !text.includes(`/${playbackId}`)) continue
+      process.kill(pid, "SIGTERM")
+    } catch {
+      // The process already exited, or this user cannot signal it.
+    }
+  }
+}
+
+function spawnTranscode(job: TranscodeJob) {
+  signalPublishers(job.playbackId)
   const child = spawn(
     ffmpegBin(),
     [
@@ -109,40 +147,114 @@ function startTranscode(cameraId: string, playbackId: string) {
       "-hide_banner",
       "-loglevel",
       "error",
+      "-fflags",
+      "genpts+discardcorrupt",
       "-rtsp_transport",
       "tcp",
       "-i",
-      `rtsp://127.0.0.1:8554/${cameraId}`,
+      job.sourceUrl,
+      "-vf",
+      "fps=15,scale=in_range=pc:out_range=tv,format=yuv420p",
       "-c:v",
       "libx264",
       "-preset",
       "ultrafast",
       "-tune",
       "zerolatency",
-      "-pix_fmt",
-      "yuv420p",
+      "-profile:v",
+      "baseline",
+      "-r",
+      "15",
+      "-g",
+      "15",
+      "-keyint_min",
+      "15",
+      "-sc_threshold",
+      "0",
+      "-bf",
+      "0",
+      "-refs",
+      "1",
+      "-b:v",
+      "1800k",
+      "-maxrate",
+      "2200k",
+      "-bufsize",
+      "1800k",
+      "-x264-params",
+      "bframes=0:rc-lookahead=0:sync-lookahead=0:sliced-threads=1",
+      "-fps_mode",
+      "cfr",
       "-an",
+      "-muxdelay",
+      "0",
+      "-muxpreload",
+      "0",
+      "-max_muxing_queue_size",
+      "16",
       "-f",
       "rtsp",
       "-rtsp_transport",
       "tcp",
-      `rtsp://127.0.0.1:8554/${playbackId}`,
+      `rtsp://127.0.0.1:8554/${job.playbackId}`,
     ],
     { stdio: "ignore" },
   )
-  transcoders.set(playbackId, child)
+  job.child = child
+  const started = Date.now()
   child.on("exit", () => {
-    if (transcoders.get(playbackId) === child) transcoders.delete(playbackId)
+    if (job.closed || transcoders.get(job.playbackId) !== job) return
+    // A fast exit means the publish path is not ready. Another start request will try again.
+    if (Date.now() - started < 2500) {
+      job.closed = true
+      transcoders.delete(job.playbackId)
+      return
+    }
+    setTimeout(() => {
+      if (job.closed || transcoders.get(job.playbackId) !== job) return
+      spawnTranscode(job)
+    }, 1500)
   })
 }
 
-function stopTranscode(playbackId: string) {
-  const child = transcoders.get(playbackId)
-  transcoders.delete(playbackId)
-  if (child && child.exitCode === null) child.kill("SIGTERM")
+function startTranscode(playbackId: string, sourceUrl: string) {
+  const running = transcoders.get(playbackId)
+  if (
+    running &&
+    !running.closed &&
+    running.sourceUrl === sourceUrl &&
+    running.child &&
+    running.child.exitCode === null
+  ) {
+    return
+  }
+  stopTranscode(playbackId)
+  const job: TranscodeJob = { sourceUrl, playbackId, child: null, closed: false }
+  transcoders.set(playbackId, job)
+  spawnTranscode(job)
 }
 
-export async function registerStream(cameraId: string, rtspUrl: string) {
+function stopTranscode(playbackId: string) {
+  const job = transcoders.get(playbackId)
+  if (job) {
+    job.closed = true
+    transcoders.delete(playbackId)
+    if (job.child && job.child.exitCode === null) job.child.kill("SIGTERM")
+  }
+  signalPublishers(playbackId)
+}
+
+export function registerStream(cameraId: string, rtspUrl: string) {
+  const current = starting.get(cameraId)
+  if (current) return current
+  const job = openStream(cameraId, rtspUrl).finally(() => {
+    if (starting.get(cameraId) === job) starting.delete(cameraId)
+  })
+  starting.set(cameraId, job)
+  return job
+}
+
+async function openStream(cameraId: string, rtspUrl: string) {
   if (!rtspUrl.startsWith("rtsp://") && !rtspUrl.startsWith("rtsps://")) {
     throw new StreamError(
       "STREAM_NO_SOURCE",
@@ -150,30 +262,25 @@ export async function registerStream(cameraId: string, rtspUrl: string) {
     )
   }
 
-  await upsertPath(
-    cameraId,
-    JSON.stringify({
-      source: rtspUrl,
-      sourceOnDemand: false,
-      rtspTransport: "tcp",
-    }),
-  )
-
-  const tracks = await waitForTracks(cameraId)
-  const hevc = tracks.some((track) => /265|hevc/i.test(track))
-  if (!hevc) return getPlaybackUrls(cameraId)
-
   const playbackId = `${cameraId}-h264`
+  const running = transcoders.get(playbackId)
+  if (running && !running.closed && running.child && running.child.exitCode === null) {
+    const live = await currentTracks(playbackId)
+    if (live.some((track) => /264|avc/i.test(track))) return getPlaybackUrls(playbackId)
+  }
+
+  // The recorder clock drifts. A steady H.264 publish keeps the browser from freezing.
+  await deletePath(cameraId).catch(() => undefined)
   stopTranscode(playbackId)
-  await deletePath(playbackId)
+  await deletePath(playbackId).catch(() => undefined)
   await upsertPath(playbackId, JSON.stringify({ source: "publisher" }))
-  startTranscode(cameraId, playbackId)
+  startTranscode(playbackId, rtspUrl)
   const converted = await waitForTracks(playbackId)
   if (!converted.some((track) => /264|avc/i.test(track))) {
     stopTranscode(playbackId)
     throw new StreamError(
       "STREAM_REJECTED",
-      "The recorder video is H.265. Converting it for the browser did not produce a picture.",
+      "The recorder video could not be prepared for the browser.",
     )
   }
   return getPlaybackUrls(playbackId)

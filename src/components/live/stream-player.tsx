@@ -2,32 +2,35 @@
 
 import { useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
-import { startStream, stopStream, useStreamSession } from "@/components/live/stream-session"
+import {
+  claimVideo,
+  setStreamMuted,
+  startStream,
+  stopStream,
+  useStreamSession,
+} from "@/components/live/stream-session"
 import type { CameraDto } from "@/server/cameras"
 
 export function StreamPlayer({ camera }: { camera: CameraDto }) {
-  const videoRef = useRef<HTMLVideoElement>(null)
+  const slotRef = useRef<HTMLDivElement>(null)
   const session = useStreamSession(camera.id)
   const [muted, setMuted] = useState(true)
   const playing = session.mode === "webrtc" || session.mode === "hls"
 
   useEffect(() => {
-    const video = videoRef.current
-    if (!video || !session.stream) return
-    if (video.srcObject !== session.stream) video.srcObject = session.stream
-    void video.play().catch(() => undefined)
-  }, [session.stream])
+    const slot = slotRef.current
+    if (!slot || !playing) return
+    return claimVideo(camera.id, slot)
+  }, [camera.id, playing, session.stream])
+
+  useEffect(() => {
+    setStreamMuted(camera.id, muted)
+  }, [camera.id, muted, playing])
 
   return (
     <div className="flex h-full flex-col overflow-hidden rounded-xl border border-border bg-sl-surface">
       <div className="relative aspect-video bg-[#0F172A]">
-        <video
-          ref={videoRef}
-          className={`h-full w-full object-contain ${playing ? "block" : "hidden"}`}
-          autoPlay
-          playsInline
-          muted={muted}
-        />
+        <div ref={slotRef} className={`h-full w-full ${playing ? "block" : "hidden"}`} />
         {session.mode === "connecting" ? (
           <div className="absolute inset-0 flex items-center justify-center text-sm text-white">
             Connecting…
